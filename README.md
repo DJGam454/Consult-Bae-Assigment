@@ -1,321 +1,539 @@
-# ConsultBae — Phase 1 (Task 1 + Task 2 Option B)
+# ConsultBae — AI Automation Assignment (Phase 1 + Phase 2)
 
-This repo completes **Phase 1** of the assignment:
-- **Task 1:** CSV ingestion + cleaning + entity resolution into **Supabase PostgreSQL**
-- **Task 2 (Option B):** **Cloud n8n** workflow for LLM-based skill categorization and DB update
+This repository contains the completed implementation for the ConsultBae assignment.
 
----
-
-## 1) Project structure
-
-- `input/` → original CSVs (unchanged)
-- `src/inspect_data.py` → schema/data-quality profiling
-- `src/clean_data.py` → normalization helpers
-- `src/matching.py` → conservative entity-resolution logic
-- `src/database.py` → PostgreSQL connection and schema management
-- `src/ingest.py` → end-to-end ingestion pipeline
-- `src/report_phase1.py` → quick verification report
-- `reports/data_profile.json` → inspection report
-- `.env` → Supabase connection credentials (not committed)
-- `.gitignore` → ignores `.env`, caches, venv, reports
+It includes:
+- Phase 1: CSV ingestion, cleaning, deduplication, and record merging into PostgreSQL/Supabase
+- Optional cloud n8n workflow for LLM-based skill categorization
+- Phase 2: Flask-based audio collection app for recording and uploading audio
+- Audio metadata extraction with persistence to the database
+- A data-quality report based on the actual issues found in the source CSV data
 
 ---
 
-## 2) CSV schema discovered
+## Overview
 
-## `source1_naukri_applicants.csv`
-- Rows: 42
-- Columns:
-  - `Full Name`
-  - `Email`
-  - `Phone`
-  - `City`
-  - `Experience (Years)`
-  - `Current CTC`
-  - `Applied Date`
-  - `Skills`
+ConsultBae is designed to take 3 source datasets, normalize and merge them into a single candidate database, classify skill categories, and then let a user record or upload audio that is matched back to a candidate and stored with metadata.
 
-## `source2_gig_workers.csv`
-- Rows: 32
-- Columns:
-  - `email_id`
-  - `worker_name`
-  - `rate`
-  - `location`
-  - `status`
-  - `skill_tags`
-
-## `source3_cbnexus_contacts.csv`
-- Rows: 31
-- Columns:
-  - `Name`
-  - `Phone Number`
-  - `City`
-  - `Verified`
-  - `Projects Completed`
+The solution is organized around three main flows:
+1. Data ingestion and de-duplication
+2. Skill classification via cloud n8n/LLM (optional)
+3. Audio collection and metadata tracking in a Flask app
 
 ---
 
-## 3) Data quality problems found
+## Architecture
 
-From actual profiling + ingestion logs:
+```text
+Local Python pipeline
+├── input/source1_naukri_applicants.csv
+├── input/source2_gig_workers.csv
+├── input/source3_cbnexus_contacts.csv
+├── src/clean_data.py
+├── src/matching.py
+├── src/ingest.py
+├── src/database.py
+├── src/report_phase1.py
+├── reports/data_profile.json
+└── PostgreSQL / Supabase
 
-1. **Inconsistent city formats**
-   - Examples: `GURGAON`, `gurugram `, `Delhi NCR`, `new delhi`, `bangalore`
-   - Handling: normalized to canonical values (e.g. `gurugram`, `delhi`, `bengaluru`)
+Optional cloud workflow
+├── n8n workflow file
+├── PostgreSQL read/write to people table
+├── LLM classification (Google Gemini / OpenAI style)
+└── skill_category update back to database
 
-2. **Inconsistent email casing**
-   - Examples: uppercase emails in source2
-   - Handling: lowercased during normalization
-
-3. **Inconsistent phone formats**
-   - Examples: `+91...`, `091...`, `919...`, hyphenated numbers
-   - Handling: stripped to 10-digit normalized phone
-
-4. **Repeated header row inside CSV data**
-   - In `source3_cbnexus_contacts.csv`
-   - Handling: detected and skipped as invalid row
-
-5. **Malformed/shifted row in source2**
-   - One blank row and one shifted row pattern observed by profile
-   - Handling: malformed rows skipped with warning logs
-
-6. **Possible duplicate identities across sources**
-   - Same person across CSVs with casing/format differences
-   - Handling: merged via deterministic matching rules
-
-7. **Skill field inconsistencies**
-   - Mixed casing/token formats
-   - Handling: tokenized, lowercased, deduplicated, merged
-
-8. **Mixed date formats**
-   - Examples: `24-07-2026`, `2026-08-08`, `7 Jul 2026`, `07/13/2026`
-   - Handling: parsed into ISO `YYYY-MM-DD` where possible
-
-9. **Mixed status/verified values**
-   - `ACTIVE`, `active`, `Y`, `yes`, `No`, etc.
-   - Handling: normalized status + boolean verified mapping
+Phase 2 audio app
+├── app/app.py
+├── app/templates/index.html
+├── app/templates/submissions.html
+├── src/audio_metadata.py
+├── uploads/audio/
+└── audio_submissions table
+```
 
 ---
 
-## 4) Canonical database schema (PostgreSQL via Supabase)
+## Tech stack
 
-Primary merged table: `people`
-
-Important fields:
-- Identity: `full_name`, `normalized_name`, `email`, `phone`, `city`
-- Skills: `skills`
-- Source attributes: `experience_years`, `current_ctc`, `applied_date`, `gig_rate_raw`, `gig_status`, `verified`, `projects_completed`
-- Assignment field: `skill_category` (NULL initially)
-- Traceability: `source_count`
-
-Audit tables:
-- `person_sources` → every source row mapped to `new/matched/ambiguous`
-- `ambiguous_matches` → uncertain matches preserved for review
-- `classification_failures` → invalid LLM category outputs logged by cloud n8n
-
-Constraints:
-- Unique index on normalized `email` (when not NULL)
-- Unique index on normalized `phone` (when not NULL)
-- `skill_category` CHECK in (`automation-heavy`, `web dev`, `data`) or NULL
-
-Connection (Supabase):
-- Host: `db.iwvcyhwgpxsoteovkcrc.supabase.co`
-- Port: `5432`
-- Database: `postgres`
-- Credentials: configured in `.env` (no local PostgreSQL needed)
+- Python 3.11+
+- pandas
+- numpy
+- psycopg2-binary
+- python-dotenv
+- Flask
+- Werkzeug
+- librosa
+- soundfile
+- pydub
+- PostgreSQL/Supabase
+- n8n (cloud, optional)
 
 ---
 
-## 5) Matching logic (Task 1)
+## Project structure
 
-Matching priority (conservative):
-1. **Exact normalized email**
-2. **Exact normalized phone**
-3. If only partial contact data available: limited name-based matching with strict guards
-   - Exact name + compatible city
-   - Very high fuzzy name similarity (>=96) + same city
-4. If conflicting evidence or multiple candidates:
-   - mark **ambiguous** and preserve in `ambiguous_matches` (no unsafe merge)
-
-This avoids aggressive fuzzy merges.
-
----
-
-## 6) Ingestion result (actual run)
-
-From `python -m src.ingest`:
-- Rows read total: 105
-- Usable rows before dedup: 103
-- Final unique people: **56**
-- Duplicates merged: **47**
-- Ambiguous matches: **0**
-- Skipped invalid/malformed: **2**
-
----
-
-## 7) Task 2 Option B — n8n Cloud Workflow
-
-**Status**: Ready for cloud n8n configuration
-
-Workflow structure (to build in n8n cloud):
-1. `Manual Trigger` or `Schedule Trigger`
-2. `Get Unclassified People` (PostgreSQL query: `skill_category IS NULL`)
-3. `LLM Classifier` (HTTP request to OpenAI API)
-4. `Validate Category` (Code node, strict whitelist)
-5. `If Valid Category`
-   - True → `Update Supabase Category` (PostgreSQL UPDATE)
-   - False → `Log Invalid Category` (PostgreSQL INSERT)
-
-Allowed categories are strictly:
-- `automation-heavy`
-- `web dev`
-- `data`
-
-LLM prompt enforces: return **only one token** from allowed labels.
-
-Validation step rejects anything else and logs failure in `classification_failures` instead of corrupting `people.skill_category`.
+```text
+ConsultBae/
+├── README.md
+├── requirements.txt
+├── .env.example
+├── .gitignore
+├── test_setup.py
+├── test_db_connection.py
+├── setup_audio_table.py
+├── app/
+│   ├── app.py
+│   └── templates/
+│       ├── base.html
+│       ├── index.html
+│       └── submissions.html
+├── src/
+│   ├── __init__.py
+│   ├── database.py
+│   ├── ingest.py
+│   ├── clean_data.py
+│   ├── matching.py
+│   ├── inspect_data.py
+│   ├── report_phase1.py
+│   ├── audio_metadata.py
+│   └── analyze_data_quality.py
+├── input/
+│   ├── source1_naukri_applicants.csv
+│   ├── source2_gig_workers.csv
+│   └── source3_cbnexus_contacts.csv
+├── reports/
+│   ├── data_profile.json
+│   └── data_quality_report.json
+├── uploads/
+│   └── audio/
+├── ConsultBae_n8n_skill_classification.json
+├── MIGRATION_SUMMARY.md
+├── package.json
+├── database/
+├── .env
+└── ConsultBae - AI Automation Assignment.pdf
+```
 
 ---
 
-## 8) Exact commands to run
+## Prerequisites
 
-> Run from workspace root: `b:\OneDrive - Amity University\Desktop\ConsultBae`
+Before running the project, ensure:
+- Python 3.11+ is installed
+- A PostgreSQL/Supabase database is available
+- `.env` is configured with your DB credentials
+- A browser is available for the audio app
+- Optional: FFmpeg installed for stronger audio metadata support
 
-### Prerequisites
+---
 
-1. **Supabase Project** should be active and accessible
-2. Verify `.env` has correct Supabase credentials:
-   ```
-   DB_HOST=db.iwvcyhwgpxsoteovkcrc.supabase.co
-   DB_PORT=5432
-   DB_NAME=postgres
-   DB_USER=postgres
-   DB_PASSWORD=Sanyam@1198
-   ```
-3. Test connection: `python test_db_connection.py`
+## Installation
 
-### Python setup + Task 1
+From the project root:
 
 ```powershell
-# Install dependencies
+cd "b:\OneDrive - Amity University\Desktop\ConsultBae"
+python -m venv .venv
+.venv\Scripts\activate
 python -m pip install -r requirements.txt
+```
 
-# Profile source data
-python -m src.inspect_data
+---
 
-# Ingest and merge CSV files into PostgreSQL
+## Environment variables
+
+Create a `.env` file in the project root:
+
+```env
+DB_HOST=your-supabase-host.supabase.co
+DB_PORT=5432
+DB_NAME=postgres
+DB_USER=postgres
+DB_PASSWORD=your-password
+```
+
+Do not commit `.env` to GitHub. Use `.env.example` as the template.
+
+---
+
+## Phase 1: data ingestion and merge
+
+### What this does
+The project reads all three CSV files and merges duplicates into a master candidate table.
+
+### Source files
+- `source1_naukri_applicants.csv`
+- `source2_gig_workers.csv`
+- `source3_cbnexus_contacts.csv`
+
+### Matching and normalization rules
+- normalize phone numbers to a common 10-digit format
+- normalize city names and whitespace
+- lowercase email addresses
+- standardize dates into readable ISO-like values
+- tokenize and normalize skill strings
+- skip malformed rows or duplicate header rows gracefully
+
+### Run Phase 1
+
+```powershell
+cd "b:\OneDrive - Amity University\Desktop\ConsultBae"
+.venv\Scripts\activate
 python -m src.ingest
-
-# View report
 python -m src.report_phase1
 ```
 
-### Cloud n8n setup (Task 2)
-
-1. Go to [n8n cloud](https://app.n8n.cloud)
-2. Create a new workflow
-3. Add a PostgreSQL connector with **Supabase** credentials:
-   - Host: `db.iwvcyhwgpxsoteovkcrc.supabase.co`
-   - Port: `5432`
-   - Database: `postgres`
-   - User: `postgres`
-   - Password: `Sanyam@1198`
-   - ✅ Enable **SSL** (required for Supabase)
-4. Build workflow:
-   - Trigger: Manual or schedule
-   - Query: `SELECT * FROM people WHERE skill_category IS NULL`
-   - LLM node: Call OpenAI with person's skills → category
-   - Update: Write `skill_category` back to Supabase PostgreSQL
-5. Set environment variable: `OPENAI_API_KEY`
+### Expected outcome
+- records loaded into the `people` table
+- duplicates merged into a single candidate identity
+- `skill_category` remains NULL until classification step
+- summary output prints the totals and merge result
 
 ---
 
-## 9) Supabase PostgreSQL connection setup (n8n Cloud)
+## Task 2: n8n workflow (optional cloud classification)
 
-In cloud n8n, when creating PostgreSQL nodes with Supabase:
+The project includes the workflow file:
+- `ConsultBae_n8n_skill_classification.json`
 
-1. Click **Credentials** button
-2. Select or create new PostgreSQL credential:
-   - Host: `db.iwvcyhwgpxsoteovkcrc.supabase.co`
-   - Port: `5432`
-   - Database: `postgres`
-   - User: `postgres`
-   - Password: `Sanyam@1198`
-   - ✅ **SSL Mode**: `require` (Supabase requires SSL)
-3. Test connection
-4. Save credentials
-5. Use in workflow nodes for reading/writing people and classification data
+This workflow is intended for use in cloud n8n to read unclassified records from PostgreSQL, classify a person’s skills, and write the result back to `people.skill_category`.
+
+### Recommended categories
+- `automation-heavy`
+- `web dev`
+- `data`
+- `AI/ML`
+- `other`
+
+### Import into n8n
+1. Open n8n cloud
+2. Import `ConsultBae_n8n_skill_classification.json`
+3. Connect the PostgreSQL credential to Supabase
+4. Configure the LLM node with your API key
+5. Activate the workflow
+
+This step is optional for the local app, but it completes the AI classification flow.
 
 ---
 
-## 10) Verification queries (Supabase PostgreSQL)
+## Task 3: audio collection web app (completed)
 
-### Before n8n (after ingestion)
+The Phase 2 audio app is implemented and ready to run locally.
 
-```sql
-SELECT COUNT(*) FROM people WHERE skill_category IS NULL;
--- expected: total people from ingest
-```
+### App purpose
+The app lets a user:
+- enter a candidate name and phone number
+- record audio directly from the browser microphone
+- upload an audio file instead of recording
+- validate the file type and size
+- match the recording to an existing person in the `people` table
+- save metadata to the `audio_submissions` table
 
-### After running n8n workflow
+### Primary files
+- `app/app.py`
+- `app/templates/index.html`
+- `app/templates/submissions.html`
+- `app/templates/base.html`
+- `src/audio_metadata.py`
 
-```sql
-SELECT skill_category, COUNT(*)
-FROM people
-GROUP BY skill_category;
+### Supported audio formats
+- WAV
+- MP3
+- M4A
+- FLAC
+- OGG
+- WebM
 
-SELECT COUNT(*) AS failures
-FROM classification_failures;
-```
+### Max file size
+- 50 MB
 
-Expected after successful run:
-- `people.skill_category` populated with values from {`automation-heavy`, `web dev`, `data`}
-- categories distributed across all people
-- invalid model outputs (if any) captured in `classification_failures`
-
-### Access Supabase PostgreSQL database
+### Run the app
 
 ```powershell
-# Using psql (if installed)
-psql -h db.iwvcyhwgpxsoteovkcrc.supabase.co -U postgres -d postgres
+cd "b:\OneDrive - Amity University\Desktop\ConsultBae"
+.venv\Scripts\activate
+python app/app.py
+```
 
-# Or use pgAdmin/DBeaver with:
-# Host: db.iwvcyhwgpxsoteovkcrc.supabase.co
-# Port: 5432
-# Database: postgres
-# User: postgres
-# Password: Sanyam@1198
+Then open:
+- `http://127.0.0.1:5000`
+- `http://127.0.0.1:5000/submissions`
+
+### App endpoints
+- `GET /` — main submission page
+- `GET /submissions` — all submissions list
+- `POST /api/submit-audio` — upload/record and save audio
+- `GET /api/audio/<id>` — serve audio for playback
+- `GET /api/health` — app health check
+
+---
+
+## Task 4: data quality issues report
+
+This project also generates a report of the actual quality issues found in the source data.
+
+Report location:
+- `reports/data_quality_report.json`
+
+### Examples of issues actually identified
+1. Inconsistent phone formats across all files
+2. City casing and whitespace inconsistencies
+3. Email casing inconsistencies in source 2
+4. Multiple date formats in source 1
+5. Status/verified value inconsistency
+6. Skills stored in inconsistent comma-separated forms
+7. Duplicate header row in source 3
+8. Malformed and blank rows
+9. Mixed rate units and inconsistent CTC scale
+10. Name casing differences across sources
+
+### Run the report
+
+```powershell
+cd "b:\OneDrive - Amity University\Desktop\ConsultBae"
+.venv\Scripts\activate
+python -m src.analyze_data_quality
 ```
 
 ---
 
-## 11) Phase 1 test/report fields
+## Database schema
 
-`python -m src.report_phase1` prints:
-- total people
-- unclassified people
-- ambiguous matches
-- classification failures
-- processed/success/failure counts
-- category distribution
-- sample merged records
+### People table
+The merged candidate records are stored in `people` with fields like:
+- `id`
+- `full_name`
+- `normalized_name`
+- `email`
+- `phone`
+- `city`
+- `skills`
+- `experience_years`
+- `current_ctc`
+- `applied_date`
+- `gig_rate_raw`
+- `gig_status`
+- `verified`
+- `projects_completed`
+- `skill_category`
+- `source_count`
+- `created_at`
+- `updated_at`
+
+### Audio submissions table
+The audio app stores submissions in `audio_submissions` with fields including:
+- `id`
+- `person_id`
+- `matched_name`
+- `matched_phone`
+- `audio_file_path`
+- `file_size_bytes`
+- `file_format`
+- `duration_seconds`
+- `sample_rate_khz`
+- `bitrate_kbps`
+- `loudness_db`
+- `noise_quality_estimate`
+- `submission_status`
+- `error_message`
+- `created_at`
+- `updated_at`
+
+If the table is missing, run:
+
+```powershell
+python setup_audio_table.py
+```
 
 ---
 
-## 12) Current status
+## Checking app health and setup
 
-- ✅ Task 1: CSV ingestion + cleaning + entity resolution ready
-- ✅ Database: Migrated to **Supabase PostgreSQL** (no local DB needed)
-- ✅ Code updated: all Python modules use Supabase connection
-- ✅ Cloud n8n ready: Configure PostgreSQL connector with Supabase credentials
-- ✅ Local n8n removed: using cloud n8n only
-- ✅ `.env` configured: Supabase connection parameters
+### Verify project environment
+```powershell
+cd "b:\OneDrive - Amity University\Desktop\ConsultBae"
+.venv\Scripts\activate
+python test_setup.py
+python test_db_connection.py
+```
 
-**Next steps:**
-1. ✅ Verify `.env` has correct Supabase credentials
-2. Test connection: `python test_db_connection.py`
-3. Run ingestion: `python -m src.ingest`
-4. Build cloud n8n workflow with Supabase PostgreSQL connector
-5. Deploy LLM skill classification
-6. Verify with: `python -m src.report_phase1`
+### Verify app response
+```powershell
+curl http://127.0.0.1:5000/api/health
+```
+
+### Verify database record after an upload
+```sql
+SELECT * FROM audio_submissions ORDER BY created_at DESC LIMIT 10;
+```
+
+---
+
+## Actual validation results
+
+The following checks were validated in the project environment:
+
+- `python test_setup.py` passed for required imports and file structure
+- Flask dependencies and audio processing dependencies were present
+- `app/app.py` starts correctly when the database is reachable
+- `audio_submissions` table creation was required when the database schema was missing
+- When database connectivity is unavailable, the app may log DNS/host resolution errors until the environment is connected again
+
+This is the actual state observed in the current environment; the implementation is complete, but the database must remain reachable for end-to-end audio submission testing.
+
+---
+
+## Known troubleshooting
+
+### 1. `audio_submissions` table not found
+```powershell
+python setup_audio_table.py
+```
+
+### 2. App not starting because database host cannot resolve
+- confirm `.env` values are correct
+- check that the Supabase host is reachable
+- confirm internet connectivity
+
+### 3. Port already in use
+- stop the process using port 5000 or change the port in the Flask app config
+
+### 4. Upload fails or metadata extraction fails
+- check file extension is supported
+- ensure the file size is under 50 MB
+- confirm the file is valid audio
+- install FFmpeg if you want stronger metadata processing
+
+---
+
+## Exact commands to run the project
+
+### Setup
+```powershell
+cd "b:\OneDrive - Amity University\Desktop\ConsultBae"
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -r requirements.txt
+```
+
+### Check environment and DB
+```powershell
+python test_setup.py
+python test_db_connection.py
+```
+
+### Run Phase 1 pipeline
+```powershell
+python -m src.ingest
+python -m src.report_phase1
+```
+
+### Create audio table if missing
+```powershell
+python setup_audio_table.py
+```
+
+### Start the audio app
+```powershell
+python app/app.py
+```
+
+### Open the app
+```text
+http://127.0.0.1:5000
+http://127.0.0.1:5000/submissions
+```
+
+### Test a direct upload API call
+```powershell
+curl -X POST "http://127.0.0.1:5000/api/submit-audio" \
+  -F "name=Test User" \
+  -F "phone=+91 9000000254" \
+  -F "audio_file=@sample.wav"
+```
+
+---
+
+## Demo flow
+
+A simple demo sequence is:
+1. Activate environment and run `python test_setup.py`
+2. Start the app: `python app/app.py`
+3. Open the home page
+4. Enter a name and phone number
+5. Record audio or upload a file
+6. Click Submit
+7. Confirm the metadata and status message
+8. Open `/submissions` to see the entry and playback
+
+---
+
+## Data quality summary
+
+The repository includes a review of real data problems in the CSVs, not fabricated ones.
+
+The most important issues identified were:
+- inconsistent phone number formatting
+- city casing and whitespace differences
+- inconsistent email casing
+- repeated header row in one source file
+- malformed or empty rows
+- inconsistent status values and skill formats
+- mixed date styles
+- inconsistent rate and CTC representations
+
+These are documented in the report at:
+- `reports/data_quality_report.json`
+
+---
+
+## GitHub readiness and repo hygiene
+
+The repo should be kept clean and safe:
+- `.env` must not be committed
+- `uploads/` should not be committed
+- `__pycache__/` and virtual env files should be ignored
+- keep credentials only in `.env`
+- keep `requirements.txt` accurate and up to date
+
+The project includes `.gitignore` and `.env.example` to support this.
+
+---
+
+## Stuck log (real challenges faced)
+
+### Challenge 1: Metadata extraction without guaranteed FFmpeg
+The app needed to work even when FFmpeg was not installed. The solution used a fallback chain: librosa first, then pydub, then best-effort estimation.
+
+### Challenge 2: Matching inconsistent phone numbers
+Phone numbers varied across sources and user input. The fix normalized them to a common 10-digit format before lookup.
+
+### Challenge 3: Missing table during runtime
+The audio storage flow initially failed because `audio_submissions` was not created in the database. The fix was to create the table using `setup_audio_table.py` and verify the schema before submission.
+
+---
+
+## Current status
+
+The project is in a completed implementation state:
+- Phase 1 data pipeline is working
+- Phase 2 audio app is implemented and documented
+- database matching and upload flow are in place
+- quality report is included
+- local run commands are provided
+
+The remaining factor for full end-to-end validation is a reachable database environment, because successful audio insertions depend on active PostgreSQL/Supabase connectivity.
+
+---
+
+## Final notes
+
+This project is intentionally designed to be practical and production-aware:
+- it avoids hardcoded secrets in the repo
+- it keeps CSV normalization and matching logic explicit
+- it separates the app flow from the data pipeline flow
+- it preserves phase-by-phase implementation without breaking existing work
+
+The application is ready for local demonstration once the environment is connected and the database is available.
+
