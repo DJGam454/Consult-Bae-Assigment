@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1>🎙️ ConsultBae Audio Collection</h1>
+    
+    <div class="nav-links">
+        <a href="/" class="active">Submit Audio</a>
+        <a href="/submissions">View Submissions</a>
+    </div>
+    
+    <div id="message" class="message"></div>
+    
+    {% if not ffmpeg_available %}
+    <div class="warning-box">
+        ⚠️ <strong>FFmpeg Not Detected:</strong> Advanced audio analysis features may be limited. 
+        See README.md for installation instructions.
+    </div>
+    {% endif %}
+    
+    <form id="audioForm">
+        <!-- Name -->
+        <div class="form-group">
+            <label for="name">Your Name *</label>
+            <input 
+                type="text" 
+                id="name" 
+                name="name" 
+                placeholder="e.g., John Doe"
+                required
+            >
+        </div>
+        
+        <!-- Phone -->
+        <div class="form-group">
+            <label for="phone">Phone Number *</label>
+            <input 
+                type="tel" 
+                id="phone" 
+                name="phone" 
+                placeholder="e.g., +91 9000000254 or 9000000254"
+                required
+            >
+        </div>
+        
+        <!-- Recording Method Selection -->
+        <div class="form-group">
+            <label>Audio Source *</label>
+            <select id="recordingMethod" required>
+                <option value="">-- Select option --</option>
+                <option value="record">Record Audio from Microphone</option>
+                <option value="upload">Upload Audio File</option>
+            </select>
+        </div>
+        
+        <!-- Recording Controls -->
+        <div id="recordingSection" style="display: none;">
+            <div class="form-group">
+                <label>Recording</label>
+                <div class="recording-controls">
+                    <button type="button" id="startBtn" class="btn-primary">
+                        🔴 Start Recording
+                    </button>
+                    <button type="button" id="stopBtn" class="btn-danger" style="display: none;">
+                        ⏹️ Stop Recording
+                    </button>
+                </div>
+                <div id="recordingStatus"></div>
+            </div>
+            
+            <div id="audioPreview" class="audio-preview">
+                <label>Preview Recording:</label>
+                <audio id="audioPlayback" controls></audio>
+                <button type="button" id="discardBtn" class="btn-secondary" style="margin-top: 10px; width: 100%;">
+                    Discard & Re-record
+                </button>
+            </div>
+        </div>
+        
+        <!-- Upload Controls -->
+        <div id="uploadSection" style="display: none;">
+            <div class="form-group">
+                <label for="audioFile">Choose Audio File *</label>
+                <input 
+                    type="file" 
+                    id="audioFile" 
+                    name="audio_file"
+                    accept="audio/*"
+                >
+                <small style="color: #666; display: block; margin-top: 8px;">
+                    Supported formats: WAV, MP3, M4A, FLAC, OGG, WebM (Max 50 MB)
+                </small>
+            </div>
+        </div>
+        
+        <!-- Metadata Display -->
+        <div id="metadataDisplay" class="metadata-display">
+            <h4>Audio Metadata</h4>
+            <div class="metadata-item">
+                <span class="metadata-label">Duration:</span>
+                <span class="metadata-value" id="metaDuration">-</span>
+            </div>
+            <div class="metadata-item">
+                <span class="metadata-label">Sample Rate:</span>
+                <span class="metadata-value" id="metaSampleRate">-</span>
+            </div>
+            <div class="metadata-item">
+                <span class="metadata-label">Bitrate:</span>
+                <span class="metadata-value" id="metaBitrate">-</span>
+            </div>
+            <div class="metadata-item">
+                <span class="metadata-label">Loudness:</span>
+                <span class="metadata-value" id="metaLoudness">-</span>
+            </div>
+            <div class="metadata-item">
+                <span class="metadata-label">Quality:</span>
+                <span class="metadata-value" id="metaQuality">-</span>
+            </div>
+        </div>
+        
+        <!-- Submit Button -->
+        <button type="submit" class="btn-primary" style="width: 100%; margin-top: 25px; padding: 14px;">
+            📤 Submit Audio
+        </button>
+    </form>
+</div>
+
+<script>
+// Audio recording state
+let mediaRecorder = null;
+let audioChunks = [];
+let recordingStartTime = null;
+let timerInterval = null;
+
+// DOM elements
+const audioForm = document.getElementById('audioForm');
+const messageDiv = document.getElementById('message');
+const recordingMethod = document.getElementById('recordingMethod');
+const recordingSection = document.getElementById('recordingSection');
+const uploadSection = document.getElementById('uploadSection');
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const discardBtn = document.getElementById('discardBtn');
+const audioFile = document.getElementById('audioFile');
+const audioPlayback = document.getElementById('audioPlayback');
+const audioPreview = document.getElementById('audioPreview');
+const recordingStatus = document.getElementById('recordingStatus');
+const metadataDisplay = document.getElementById('metadataDisplay');
+
+// Show message
+function showMessage(message, type = 'info') {
+    messageDiv.textContent = message;
+    messageDiv.className = `message ${type}`;
+    setTimeout(() => {
+        messageDiv.className = 'message';
+    }, 5000);
+}
+
+// Recording method change
+recordingMethod.addEventListener('change', (e) => {
+    const method = e.target.value;
+    recordingSection.style.display = method === 'record' ? 'block' : 'none';
+    uploadSection.style.display = method === 'upload' ? 'block' : 'none';
+    audioPreview.style.display = 'none';
+    audioChunks = [];
+});
+
+// Start recording
+startBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        
+        mediaRecorder.ondataavailable = (event) => {
+            audioChunks.push(event.data);
+        };
+        
+        mediaRecorder.onstop = () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+            audioPlayback.src = audioUrl;
+            audioPreview.style.display = 'block';
+        };
+        
+        mediaRecorder.start();
+        recordingStartTime = Date.now();
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'flex';
+        
+        // Update timer
+        recordingStatus.innerHTML = '<span class="recording-status recording">🔴 Recording... <span class="timer">0:00</span></span>';
+        timerInterval = setInterval(() => {
+            const elapsed = Math.floor((Date.now() - recordingStartTime) / 1000);
+            const mins = Math.floor(elapsed / 60);
+            const secs = elapsed % 60;
+            const timer = document.querySelector('.timer');
+            if (timer) {
+                timer.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+            }
+        }, 1000);
+        
+    } catch (err) {
+        showMessage(`Microphone access denied or not available: ${err.message}`, 'error');
+    }
+});
+
+// Stop recording
+stopBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (mediaRecorder) {
+        mediaRecorder.stop();
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        clearInterval(timerInterval);
+        startBtn.style.display = 'flex';
+        stopBtn.style.display = 'none';
+        recordingStatus.innerHTML = '<span class="recording-status">✅ Recording complete</span>';
+    }
+});
+
+// Discard recording
+discardBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    audioChunks = [];
+    audioPreview.style.display = 'none';
+    audioPlayback.src = '';
+    recordingStatus.innerHTML = '';
+    startBtn.style.display = 'flex';
+});
+
+// Handle form submission
+audioForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const name = document.getElementById('name').value.trim();
+    const phone = document.getElementById('phone').value.trim();
+    const method = recordingMethod.value;
+    
+    if (!name || !phone) {
+        showMessage('Please enter name and phone number', 'error');
+        return;
+    }
+    
+    if (!method) {
+        showMessage('Please select audio source (record or upload)', 'error');
+        return;
+    }
+    
+    let audioBlob = null;
+    
+    if (method === 'record') {
+        if (audioChunks.length === 0) {
+            showMessage('No recording found. Please record audio first.', 'error');
+            return;
+        }
+        audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+    } else if (method === 'upload') {
+        if (!audioFile.files.length) {
+            showMessage('Please select an audio file to upload', 'error');
+            return;
+        }
+        audioBlob = audioFile.files[0];
+    }
+    
+    if (!audioBlob) {
+        showMessage('No audio data found', 'error');
+        return;
+    }
+    
+    // Submit form
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('phone', phone);
+    formData.append('audio_file', audioBlob, `audio_${Date.now()}.${method === 'record' ? 'webm' : audioFile.files[0].name.split('.').pop()}`);
+    
+    // Show loading state
+    const submitBtn = audioForm.querySelector('button[type="submit"]');
+    const originalText = submitBtn.textContent;
+    submitBtn.innerHTML = '<span class="loading"></span>Submitting...';
+    submitBtn.disabled = true;
+    
+    try {
+        const response = await fetch('/api/submit-audio', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showMessage(
+                `✅ Audio submitted successfully! ${result.person_matched ? '(Matched to database record)' : '(No person match found)'}`,
+                'success'
+            );
+            
+            // Display returned metadata
+            if (result.metadata) {
+                displayMetadata(result.metadata);
+            }
+            
+            // Reset form
+            audioForm.reset();
+            audioChunks = [];
+            audioPreview.style.display = 'none';
+            recordingSection.style.display = 'none';
+            uploadSection.style.display = 'none';
+            recordingStatus.innerHTML = '';
+            
+        } else {
+            showMessage(`Error: ${result.message}`, 'error');
+        }
+        
+    } catch (err) {
+        showMessage(`Submission failed: ${err.message}`, 'error');
+    } finally {
+        submitBtn.textContent = originalText;
+        submitBtn.disabled = false;
+    }
+});
+
+// Display metadata
+function displayMetadata(metadata) {
+    metadataDisplay.style.display = 'block';
+    
+    if (metadata.duration) {
+        const mins = Math.floor(metadata.duration / 60);
+        const secs = (metadata.duration % 60).toFixed(1);
+        document.getElementById('metaDuration').textContent = `${mins}:${secs.padStart(4, '0')}`;
+    }
+    
+    if (metadata.sample_rate) {
+        document.getElementById('metaSampleRate').textContent = `${metadata.sample_rate.toFixed(1)} kHz`;
+    }
+    
+    if (metadata.bitrate) {
+        document.getElementById('metaBitrate').textContent = `${metadata.bitrate} kbps`;
+    }
+    
+    if (metadata.loudness) {
+        document.getElementById('metaLoudness').textContent = `${metadata.loudness.toFixed(1)} dB`;
+    }
+    
+    if (metadata.quality) {
+        document.getElementById('metaQuality').textContent = metadata.quality;
+    }
+}
+</script>
+{% endblock %}

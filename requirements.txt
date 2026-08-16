@@ -1,0 +1,13 @@
+pandas==2.1.4
+rapidfuzz==3.14.5
+python-dotenv==1.2.2
+psycopg2-binary==2.9.9
+Flask==2.3.3
+Werkzeug==2.3.7
+librosa==0.10.0
+soundfile==0.12.1
+pydub==0.25.1
+numpy>=1.24.3,<2.0
+scipy==1.11.2
+
+

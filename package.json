@@ -1,0 +1,15 @@
+{
+  "name": "consultbae",
+  "version": "1.0.0",
+  "description": "ConsultBae Phase 1: CSV ingestion + cleaning + entity resolution to PostgreSQL, with cloud n8n workflow for LLM-based skill categorization",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["postgresql", "csv", "ingestion", "n8n", "automation"],
+  "author": "",
+  "license": "ISC"
+}

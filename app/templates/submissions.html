@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1>🎵 Audio Submissions</h1>
+    
+    <div class="nav-links">
+        <a href="/">Submit Audio</a>
+        <a href="/submissions" class="active">View Submissions</a>
+    </div>
+    
+    {% if submissions %}
+    <div class="submissions-list">
+        <p style="color: #666; margin-bottom: 20px;">
+            Total submissions: <strong>{{ submissions|length }}</strong>
+        </p>
+        
+        {% for submission in submissions %}
+        <div class="submission-item">
+            <h4>
+                {% if submission.person_full_name %}
+                    📊 {{ submission.person_full_name }}
+                {% else %}
+                    📝 {{ submission.matched_name }}
+                {% endif %}
+            </h4>
+            
+            <div class="submission-info">
+                <p>
+                    <strong>Phone:</strong> {{ submission.matched_phone }}<br>
+                    <strong>Submitted:</strong> {{ submission.created_at.strftime('%Y-%m-%d %H:%M:%S') }}<br>
+                    {% if submission.person_id %}
+                        <strong style="color: #28a745;">✓ Matched to database record (ID: {{ submission.person_id }})</strong>
+                    {% else %}
+                        <strong style="color: #ffc107;">⊘ No database match found</strong>
+                    {% endif %}
+                </p>
+            </div>
+            
+            <div class="submission-audio">
+                <label style="font-weight: 600; margin-bottom: 10px; display: block;">Audio Player:</label>
+                <audio controls style="width: 100%; background: #f8f9fa; border-radius: 4px;">
+                    <source src="/api/audio/{{ submission.id }}" type="audio/mpeg">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+            
+            <div class="submission-metadata">
+                <h5 style="color: #333; margin-bottom: 8px;">📋 Audio Metadata:</h5>
+                
+                <p>
+                    <strong>Duration:</strong>
+                    {% if submission.duration_seconds %}
+                        {% set mins = (submission.duration_seconds / 60)|int %}
+                        {% set secs = (submission.duration_seconds % 60)|int %}
+                        {{ mins }}:{{ "%02d"|format(secs) }} seconds
+                    {% else %}
+                        Not available
+                    {% endif %}
+                </p>
+                
+                <p>
+                    <strong>Sample Rate:</strong>
+                    {% if submission.sample_rate_khz %}
+                        {{ "%.1f"|format(submission.sample_rate_khz) }} kHz
+                    {% else %}
+                        Not available
+                    {% endif %}
+                </p>
+                
+                <p>
+                    <strong>Bitrate:</strong>
+                    {% if submission.bitrate_kbps %}
+                        {{ submission.bitrate_kbps }} kbps
+                    {% else %}
+                        Not available
+                    {% endif %}
+                </p>
+                
+                <p>
+                    <strong>Loudness:</strong>
+                    {% if submission.loudness_db %}
+                        {{ "%.1f"|format(submission.loudness_db) }} dB
+                    {% else %}
+                        Not available
+                    {% endif %}
+                </p>
+                
+                <p>
+                    <strong>Quality Estimate:</strong>
+                    {% if submission.noise_quality_estimate %}
+                        <span style="
+                            {% if submission.noise_quality_estimate == 'high' %}
+                                color: #28a745; font-weight: bold;
+                            {% elif submission.noise_quality_estimate == 'medium' %}
+                                color: #ffc107; font-weight: bold;
+                            {% elif submission.noise_quality_estimate == 'low' %}
+                                color: #dc3545; font-weight: bold;
+                            {% endif %}
+                        ">
+                            {{ submission.noise_quality_estimate|upper }}
+                        </span>
+                    {% else %}
+                        Not available
+                    {% endif %}
+                </p>
+                
+                <p style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e9ecef; color: #999; font-size: 12px;">
+                    <strong>File:</strong> {{ submission.file_format|upper if submission.file_format else 'Unknown' }}
+                </p>
+            </div>
+            
+            {% if submission.person_full_name %}
+            <div class="submission-metadata" style="background: #e7f3ff; border-left: 2px solid #2196F3; margin-top: 10px;">
+                <h5 style="color: #1976D2; margin-bottom: 8px;">👤 Person Details (from database):</h5>
+                <p>
+                    <strong>Name:</strong> {{ submission.person_full_name }}<br>
+                    <strong>Email:</strong> {{ submission.person_email or 'Not available' }}<br>
+                    <strong>Skills:</strong> {{ submission.person_skills or 'Not available' }}<br>
+                    <strong>Skill Category:</strong> 
+                    {% if submission.person_skill_category %}
+                        <span style="background: #667eea; color: white; padding: 2px 8px; border-radius: 3px; font-size: 12px;">
+                            {{ submission.person_skill_category }}
+                        </span>
+                    {% else %}
+                        <span style="color: #999;">Not classified</span>
+                    {% endif %}
+                </p>
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    
+    {% else %}
+    <div style="text-align: center; padding: 40px 20px; color: #999;">
+        <p style="font-size: 48px; margin-bottom: 20px;">🎙️</p>
+        <p style="font-size: 18px; margin-bottom: 10px;">No audio submissions yet</p>
+        <p style="font-size: 14px; margin-bottom: 20px;">Start by submitting your first audio recording</p>
+        <a href="/" style="
+            display: inline-block;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: 600;
+        ">
+            Submit Audio
+        </a>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// Auto-refresh submissions every 10 seconds
+setTimeout(() => {
+    location.reload();
+}, 10000);
+</script>
+{% endblock %}

@@ -1,0 +1,28 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+
+# Database artifacts
+database/*.db
+database/*.sqlite
+
+# Generated reports/logs
+reports/
+
+# Audio uploads (never commit)
+uploads/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/*.log
+
