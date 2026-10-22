@@ -1,0 +1,47 @@
+# Dependency updates for the repositories with a runtime.
+#
+# Security updates are grouped into a single PR per repo per week, so a
+# security release produces one reviewable diff instead of fifteen.
+# Version updates are grouped the same way to keep noise low.
+#
+# Added during the October 2026 security sweep. Before this file existed,
+# none of these repos received any dependency update notification at all,
+# which is how 41 advisories accumulated unnoticed in an Angular app.
+version: 2
+updates:
+- package-ecosystem: "npm"
+  directory: "/"
+  schedule:
+    interval: weekly
+    day: monday
+  open-pull-requests-limit: 5
+  commit-message:
+    prefix: "chore(deps)"
+  groups:
+    security:
+      applies-to: security-updates
+      patterns:
+        - "*"
+    minor-and-patch:
+      applies-to: version-updates
+      update-types:
+        - minor
+        - patch
+- package-ecosystem: "pip"
+  directory: "/"
+  schedule:
+    interval: weekly
+    day: monday
+  open-pull-requests-limit: 5
+  commit-message:
+    prefix: "chore(deps)"
+  groups:
+    security:
+      applies-to: security-updates
+      patterns:
+        - "*"
+    minor-and-patch:
+      applies-to: version-updates
+      update-types:
+        - minor
+        - patch
